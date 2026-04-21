@@ -14,7 +14,7 @@
 
 #### (1) 3D手势控制圣诞树
 
-![3D圣诞树演示效果](D:\Project\HuangVisualLab\assets\3D圣诞树演示效果.gif)
+![3D圣诞树演示效果](.\assets\3D圣诞树演示效果.gif)
 
 ------
 
