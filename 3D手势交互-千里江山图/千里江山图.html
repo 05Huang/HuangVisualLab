@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>千里江山图</title>
+    <!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cyber Landscape - Immersive Control</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000000; font-family: 'Segoe UI', sans-serif; }
+        canvas { display: block; }
+
+        /* UI 面板 */
+        #ui-layer {
+            position: absolute; top: 20px; left: 20px; pointer-events: none; z-index: 10;
+        }
+        .panel {
+            background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(8px);
+            padding: 20px; border-radius: 4px; border: 1px solid rgba(0, 255, 255, 0.2);
+            color: #eee; width: 260px; pointer-events: auto;
+        }
+        h1 {
+            margin: 0 0 15px 0; font-size: 14px; letter-spacing: 2px;
+            text-transform: uppercase; color: #00ffff; text-align: center;
+            border-bottom: 1px solid rgba(0, 255, 255, 0.2); padding-bottom: 10px;
+        }
+        .status-text { font-size: 12px; color: #888; display: block; text-align: center; margin-bottom: 10px; }
+        button {
+            width: 100%; padding: 10px; background: transparent;
+            border: 1px solid #00ffff; color: #00ffff;
+            cursor: pointer; font-size: 12px; transition: 0.3s;
+            text-transform: uppercase; letter-spacing: 1px;
+        }
+        button:hover { background: rgba(0, 255, 255, 0.2); box-shadow: 0 0 15px rgba(0,255,255,0.4); }
+
+        /* 摄像头小窗 */
+        #cam-container {
+            position: absolute; bottom: 20px; right: 20px;
+            width: 160px; height: 120px; z-index: 5;
+            border: 1px solid #333; background: #000;
+            transform: scaleX(-1); opacity: 0.8;
+        }
+        #cam-video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0.4; }
+        #output-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 6; }
+    </style>
+
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- MediaPipe -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <div id="ui-layer">
+        <div class="panel">
+            <h1>Particle Void</h1>
+            <span class="status-text" id="status-text">初始化渲染引擎...</span>
+            <button id="fs-btn">进入全屏沉浸</button>
+            <div style="font-size:10px; color:#555; margin-top:10px; text-align:center;">
+                * 缩放手掌控制高度 | 旋转控制视角 | 前后控制推近 *
+            </div>
+        </div>
+    </div>
+
+    <div id="cam-container">
+        <video id="cam-video" playsinline muted autoplay></video>
+        <canvas id="output-canvas"></canvas>
+    </div>
+
+    <script>
+        // ================= 配置参数 =================
+        const CONFIG = {
+            particleCount: 350000,
+            rangeX: 120,
+            rangeZ: 140,
+            lineCount: 400,
+            colorRiver: new THREE.Color('rgba(253,232,3,0.94)'),
+            colorMtBase: new THREE.Color('#002044'),
+            colorMtTop: new THREE.Color('#00fff7')
+        };
+
+        // ================= 1. Three.js 场景 =================
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color('#000000');
+        scene.fog = new THREE.FogExp2(0x000000, 0.015);
+
+        const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 500);
+        camera.position.set(0, 15, 40);
+        camera.lookAt(0, 0, -20);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+        document.body.appendChild(renderer.domElement);
+
+        // ================= 2. 几何体生成 =================
+        const geometry = new THREE.BufferGeometry();
+        const positions = [];
+        const randoms = [];
+        const lineIndices = [];
+        const pointsPerLine = Math.floor(CONFIG.particleCount / CONFIG.lineCount);
+
+        for (let i = 0; i < CONFIG.lineCount; i++) {
+            const z = (i / CONFIG.lineCount - 0.5) * CONFIG.rangeZ;
+            for (let j = 0; j < pointsPerLine; j++) {
+                const x = (j / pointsPerLine - 0.5) * CONFIG.rangeX;
+                positions.push(x, 0, z);
+                randoms.push(Math.random(), Math.random(), Math.random());
+                lineIndices.push(i / CONFIG.lineCount);
+            }
+        }
+
+        const dustCount = 20000;
+        for(let i=0; i<dustCount; i++) {
+            positions.push((Math.random()-0.5)*CONFIG.rangeX, Math.random()*30 + 10, (Math.random()-0.5)*CONFIG.rangeZ);
+            randoms.push(Math.random(), Math.random(), Math.random());
+            lineIndices.push(-1.0);
+        }
+
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        geometry.setAttribute('aRandom', new THREE.Float32BufferAttribute(randoms, 3));
+        geometry.setAttribute('aLine', new THREE.Float32BufferAttribute(lineIndices, 1));
+
+        // ================= 3. Shader =================
+        const vertexShader = `
+            uniform float uTime;
+            uniform float uScale;
+            attribute vec3 aRandom;
+            attribute float aLine;
+            varying float vType;
+            varying float vHeight;
+            varying float vIntensity;
+
+            vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec2 mod289(vec2 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec3 permute(vec3 x) { return mod289(((x*34.0)+1.0)*x); }
+            float snoise(vec2 v) {
+                const vec4 C = vec4(0.211324865405187, 0.366025403784439, -0.577350269189626, 0.024390243902439);
+                vec2 i  = floor(v + dot(v, C.yy) );
+                vec2 x0 = v - i + dot(i, C.xx);
+                vec2 i1; i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+                vec4 x12 = x0.xyxy + C.xxzz; x12.xy -= i1;
+                i = mod289(i);
+                vec3 p = permute( permute( i.y + vec3(0.0, i1.y, 1.0 )) + i.x + vec3(0.0, i1.x, 1.0 ));
+                vec3 m = max(0.5 - vec3(dot(x0,x0), dot(x12.xy,x12.xy), dot(x12.zw,x12.zw)), 0.0);
+                m = m*m ; m = m*m ;
+                vec3 x = 2.0 * fract(p * C.www) - 1.0;
+                vec3 h = abs(x) - 0.5;
+                vec3 ox = floor(x + 0.5);
+                vec3 a0 = x - ox;
+                m *= 1.79284291400159 - 0.85373472095314 * ( a0*a0 + h*h );
+                vec3 g;
+                g.x  = a0.x  * x0.x  + h.x  * x0.y;
+                g.yz = a0.yz * x12.xz + h.yz * x12.yw;
+                return 130.0 * dot(m, g);
+            }
+
+            void main() {
+                vec3 pos = position;
+                if (aLine < -0.5) {
+                    vType = 3.0;
+                    float t = uTime * 0.2 + aRandom.x * 10.0;
+                    pos.x += sin(t) * 5.0;
+                    pos.z += cos(t * 0.7) * 5.0;
+                    pos.y += sin(t * 1.5) * 2.0;
+                    vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+                    gl_Position = projectionMatrix * mvPosition;
+                    gl_PointSize = (2.0 + uScale * 2.0) * (30.0 / -mvPosition.z);
+                    return;
+                }
+                float riverCurve = sin(pos.z * 0.08) * 12.0 + sin(pos.z * 0.2) * 4.0;
+                float distToRiver = abs(pos.x - riverCurve);
+                float height = 0.0;
+                float pointSize = 0.0;
+
+                if (distToRiver < 3.5) {
+                    vType = 0.0;
+                    float flow = snoise(vec2(pos.x * 0.5, pos.z * 0.2 - uTime * 0.8));
+                    height = flow * 0.8;
+                    pointSize = 3.0 * (1.0 - distToRiver / 3.5);
+                    vIntensity = 0.8 + 0.5 * sin(uTime * 5.0 + aRandom.x * 20.0);
+                }
+                else if (distToRiver < 10.0 + (1.0-uScale)*5.0) {
+                    vType = 2.0;
+                    pointSize = 0.0;
+                }
+                else {
+                    vType = 1.0;
+                    float mDist = distToRiver - 10.0;
+                    float n1 = snoise(vec2(pos.x * 0.05, pos.z * 0.08));
+                    float n2 = snoise(vec2(pos.x * 0.15, pos.z * 0.15));
+                    height = (abs(n1) * 15.0 + n2 * 5.0) * (mDist * 0.08);
+                    height = clamp(height, 0.0, 35.0);
+                    height *= (0.6 + uScale * 1.5);
+                    pointSize = 1.5 + height * 0.08;
+                    float linePattern = sin(aLine * 300.0);
+                    if (linePattern > 0.8) { pointSize *= 1.5; vIntensity = 1.5; }
+                    else { vIntensity = 0.8; }
+                }
+                pos.y = height;
+                vHeight = height;
+                vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+                gl_Position = projectionMatrix * mvPosition;
+                gl_PointSize = pointSize * (40.0 / -mvPosition.z);
+            }
+        `;
+
+        const fragmentShader = `
+            uniform vec3 uColorRiver;
+            uniform vec3 uColorMtBase;
+            uniform vec3 uColorMtTop;
+            varying float vType;
+            varying float vHeight;
+            varying float vIntensity;
+            void main() {
+                if (vType > 1.5 && vType < 2.5) discard;
+                vec2 uv = gl_PointCoord.xy - 0.5;
+                float d = length(uv);
+                if (d > 0.5) discard;
+                float alpha = 1.0 - smoothstep(0.2, 0.5, d);
+                vec3 color = vec3(0.0);
+                if (vType < 0.5) {
+                    color = uColorRiver;
+                    color += vec3(0.4, 0.4, 0.2);
+                } else if (vType > 2.5) {
+                    color = vec3(1.0); alpha *= 0.5;
+                } else {
+                    float hFactor = clamp(vHeight / 25.0, 0.0, 1.0);
+                    color = mix(uColorMtBase, uColorMtTop, hFactor);
+                    color *= vIntensity;
+                    if (hFactor > 0.8) color += vec3(0.2);
+                }
+                gl_FragColor = vec4(color, alpha);
+            }
+        `;
+
+        const uniforms = {
+            uTime: { value: 0 },
+            uScale: { value: 0.0 },
+            uColorRiver: { value: CONFIG.colorRiver },
+            uColorMtBase: { value: CONFIG.colorMtBase },
+            uColorMtTop: { value: CONFIG.colorMtTop }
+        };
+
+        const material = new THREE.ShaderMaterial({
+            vertexShader, fragmentShader, uniforms,
+            transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
+        });
+
+        const particleSystem = new THREE.Points(geometry, material);
+        scene.add(particleSystem);
+
+        // ================= 4. 动画循环 =================
+        const clock = new THREE.Clock();
+        let targetScale = 0.2;
+        let currentScale = 0.2;
+        let targetRotationY = 0;
+        let currentRotationY = 0;
+
+        // --- 新增：深度控制变量 ---
+        let targetCamZ = 40;
+        let currentCamZ = 40;
+
+        let isHandActive = false;
+        let handLostFrames = 0;
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const t = clock.getElapsedTime();
+
+            if (!isHandActive) {
+                handLostFrames++;
+                if (handLostFrames > 20) {
+                    targetScale = 0.2 + Math.sin(t * 0.5) * 0.1;
+                    targetRotationY = Math.sin(t * 0.2) * 0.1;
+                    targetCamZ = 40 + Math.sin(t * 0.3) * 2; // 待机轻微前后呼吸
+                }
+            } else {
+                handLostFrames = 0;
+            }
+
+            // 缓动处理
+            currentScale += (targetScale - currentScale) * 0.05;
+            currentRotationY += (targetRotationY - currentRotationY) * 0.05;
+            currentCamZ += (targetCamZ - currentCamZ) * 0.05; // 平滑深度
+
+            uniforms.uTime.value = t;
+            uniforms.uScale.value = currentScale;
+
+            scene.rotation.y = currentRotationY;
+
+            // --- 应用相机深度控制 ---
+            camera.position.z = currentCamZ;
+
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        // ================= 5. UI 事件 =================
+        document.getElementById('fs-btn').addEventListener('click', () => {
+             if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+             else document.exitFullscreen();
+        });
+
+        // ================= 6. MediaPipe 集成 =================
+        const videoElement = document.getElementById('cam-video');
+        const canvasElement = document.getElementById('output-canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const statusText = document.getElementById('status-text');
+
+        function resizeCanvas() {
+            canvasElement.width = videoElement.videoWidth || 160;
+            canvasElement.height = videoElement.videoHeight || 120;
+        }
+
+        function onResults(results) {
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                isHandActive = true;
+                statusText.innerText = "多维控制中 (张开高度/旋转视角/前后推移)";
+
+                for (const landmarks of results.multiHandLandmarks) {
+                    drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: 'rgba(0,255,255,0.5)', lineWidth: 2});
+                    drawLandmarks(canvasCtx, landmarks, {color: '#00ffff', lineWidth: 1, radius: 2});
+
+                    const wrist = landmarks[0];
+                    const middleMCP = landmarks[9]; // 中指根部
+                    const middleTip = landmarks[12]; // 中指指尖
+
+                    // 1. 高度控制 (指尖到手腕的距离 - 代表手掌张开度)
+                    const openDistance = Math.sqrt(Math.pow(wrist.x - middleTip.x, 2) + Math.pow(wrist.y - middleTip.y, 2));
+                    targetScale = Math.max(0.0, Math.min(1.2, (openDistance - 0.15) * 3.0));
+
+                    // 2. 视角旋转 (手掌倾斜角度)
+                    const angle = Math.atan2(middleMCP.x - wrist.x, wrist.y - middleMCP.y);
+                    targetRotationY = angle * 1.5;
+
+                    // --- 3. 新增：深度控制 (手掌在画面中的投影大小) ---
+                    // 使用手腕到中指根部的距离，这个长度相对固定，只随手掌离镜头远近变化
+                    const palmSize = Math.sqrt(Math.pow(wrist.x - middleMCP.x, 2) + Math.pow(wrist.y - middleMCP.y, 2));
+
+                    // 映射 palmSize (通常在 0.05远 到 0.25近 之间) 到 相机 Z 轴 (60远 到 15近)
+                    // 值越大代表手越近，相机 Z 应该越小
+                    let zVal = 60 - (palmSize - 0.05) * 200;
+                    targetCamZ = Math.max(15, Math.min(65, zVal));
+                }
+            } else {
+                isHandActive = false;
+                statusText.innerText = "请展示手掌";
+            }
+            canvasCtx.restore();
+        }
+
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 0,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+        hands.onResults(onResults);
+
+        const cameraUtils = new Camera(videoElement, {
+            onFrame: async () => {
+                if(canvasElement.width !== videoElement.videoWidth) resizeCanvas();
+                await hands.send({image: videoElement});
+            },
+            width: 320,
+            height: 240
+        });
+
+        cameraUtils.start().then(() => statusText.innerText = "系统就绪").catch(e => statusText.innerText = "摄像头未授权");
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
+    <audio src="video_20260225_145437_edit.mp3" autoplay loop hidden="hidden"></audio>
+</head>
+<body>
+
+</body>
+</html>
